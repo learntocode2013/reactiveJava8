@@ -1,0 +1,8 @@
+# These file types will be excluded from version control
+
+#----- All intellij specific project files -----#
+*.iml
+.idea/*
+
+#------ All class files ----#
+*.class
