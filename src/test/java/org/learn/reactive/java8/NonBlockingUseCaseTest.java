@@ -1,5 +1,6 @@
 package org.learn.reactive.java8;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -8,8 +9,7 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDate;
 import java.time.Month;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -19,6 +19,9 @@ import static org.learn.reactive.java8.FilterOperations.filterCustomersByPurchas
 
 public class NonBlockingUseCaseTest {
 
+	private final int poolSize = Runtime.getRuntime().availableProcessors();
+	private final ScheduledExecutorService tPoolService = Executors
+			.newScheduledThreadPool(poolSize);
 	private final Logger logger = LoggerFactory.getLogger(NonBlockingUseCaseTest.class);
 
 	//-- Compute intensive operation involving remote calls, processing and transformations --
@@ -36,6 +39,32 @@ public class NonBlockingUseCaseTest {
 
 		logger.info("{} thread is free to perform other computations",Thread.currentThread().getName());
 		futureAction.join(); // Blocking call.Wait for the future to complete.
+	}
+
+	@Test
+	@DisplayName("Fans out request to remote service expecting result within some time")
+	void timeBoundOperation() {
+		final CompletableFuture<String> timeoutFuture = new CompletableFuture<>();
+		final CompletableFuture<String> futureResult = CompletableFuture.supplyAsync(() -> {
+			try {
+				Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			return "200 OK";
+		});
+
+		tPoolService.schedule(() -> timeoutFuture.completeExceptionally(new RuntimeException("Operation timed out")),
+				2,
+				TimeUnit.SECONDS);
+
+		futureResult
+				.applyToEither(timeoutFuture,str -> str)
+				.exceptionally(throwable -> {
+					logger.error("Operation failed with error",throwable.getCause());
+					return StringUtils.EMPTY;
+				}).join();
+		logger.info("Client thread [{}] exiting",Thread.currentThread().getName());
 	}
 
 	@Test
