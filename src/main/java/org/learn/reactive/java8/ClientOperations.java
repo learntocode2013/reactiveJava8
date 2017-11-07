@@ -6,12 +6,14 @@ import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class ClientOperations {
 	public static final String TOP_STORIES_FROM_HN = "https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty";
 	public static final String FIRST_TOP_STORY_HN = "https://hacker-news.firebaseio.com/v0/item/%s.json?print=pretty";
 	public static final String LATEST_FROM_DZONE = "https://dzone.com/java-jdk-development-tutorials-tools-news";
+	public static final String SOME_INVALID_DOMAIN = "http://-domain.com/noresponse.html";
 
 	// -- This is a blocking network call. Thread will not be released until the
 	// calls returns successfully or with an error
@@ -40,6 +42,19 @@ public class ClientOperations {
 				Thread.currentThread().getName(),
 				endpoint,result.orElse("<empty>"));*/
 		return result;
+	}
+
+	static public Optional<String> failsWithException()
+	{
+		try
+		{
+			Thread.sleep(TimeUnit.SECONDS.toMillis(4));
+		}
+		catch (InterruptedException e)
+		{
+			e.printStackTrace();
+		}
+		throw new RuntimeException("Computation was aborted due to resource limitations !!!");
 	}
 
 	public static List<String> getTopN(String response, int topN) {

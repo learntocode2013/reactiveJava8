@@ -2,6 +2,8 @@ package org.learn.reactive.java8;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
 import java.time.Month;
@@ -17,6 +19,8 @@ import static org.learn.reactive.java8.FilterOperations.filterCustomersByPurchas
 
 public class NonBlockingUseCaseTest {
 
+	private final Logger logger = LoggerFactory.getLogger(NonBlockingUseCaseTest.class);
+
 	//-- Compute intensive operation involving remote calls, processing and transformations --
 	@Test
 	@DisplayName("Offers discount for items in cart older than a week and value >= 1Lac")
@@ -30,7 +34,7 @@ public class NonBlockingUseCaseTest {
 				.thenApply(filterCustomersByPurchases(1_000.00))
 				.thenAccept(printEligibleCustomerCount());
 
-		System.out.printf("%s -- is free to perform other computations... %n",Thread.currentThread().getName());
+		logger.info("{} thread is free to perform other computations",Thread.currentThread().getName());
 		futureAction.join(); // Blocking call.Wait for the future to complete.
 	}
 
@@ -61,18 +65,34 @@ public class NonBlockingUseCaseTest {
 		}
 
 		// Non-blocking operation
-		System.out.println("------ Top 3 results ------");
+		logger.info("------ Top {} results ------",3);
 		resultStream.forEach(System.out::println);
 		System.out.println();
 
 		// For demonstration, wait for both futures to complete;
 		// might block if the other futures are still being computed
-		System.out.println("--- Waiting for all futures to complete ---");
-		CompletableFuture
-				.allOf(futureFromHN,futureFromDzone).thenRun(() -> {
-					System.out.println("--- All futures done with computation ---");
+		logger.info("--- Waiting for all futures to complete ---");
+		final CompletableFuture<Void> allCompleted = CompletableFuture.allOf(futureFromHN, futureFromDzone);
+		allCompleted
+				.thenRun(() -> {
+					logger.info("--- All futures done with computation ---");
 					})
 				.join();
+	}
+
+
+	@Test
+	@DisplayName("Makes a remote service call and handles error if any")
+	void handleErrors() throws ExecutionException, InterruptedException {
+		final CompletableFuture<String> recoverableFuture = CompletableFuture
+				.supplyAsync(() -> failsWithException())
+				.exceptionally(Operations.logErrorAndRetryOperation())
+				.thenApply(potentialResult -> potentialResult.get());
+
+		recoverableFuture.join();
+		logger.info("Value {} is available for client thread [{}]",
+				recoverableFuture.get(),
+				Thread.currentThread().getName());
 	}
 
 	private Consumer<Stream<Customer>> printEligibleCustomerCount() {
