@@ -1,15 +1,27 @@
 package org.learn.reactive.java8;
 
+import org.asynchttpclient.AsyncHttpClient;
+import org.asynchttpclient.DefaultAsyncHttpClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.util.*;
+import java.nio.charset.Charset;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class ClientOperations {
+	private static final Logger logger = LoggerFactory.getLogger(ClientOperations.class);
 	public static final String TOP_STORIES_FROM_HN = "https://hacker-news.firebaseio.com/v0/topstories.json?print=pretty";
 	public static final String FIRST_TOP_STORY_HN = "https://hacker-news.firebaseio.com/v0/item/%s.json?print=pretty";
 	public static final String LATEST_FROM_DZONE = "https://dzone.com/java-jdk-development-tutorials-tools-news";
@@ -34,7 +46,7 @@ public class ClientOperations {
 		}
 		catch (Exception cause)
 		{
-			System.err.printf("Failed to notify endpoint %s %n",endpoint);
+			logger.error("Could not reach endpoint {}",endpoint,cause.getCause());
 			cause.printStackTrace();
 		}
 		//-- uncomment for debugging
@@ -42,6 +54,47 @@ public class ClientOperations {
 				Thread.currentThread().getName(),
 				endpoint,result.orElse("<empty>"));*/
 		return result;
+	}
+
+	static public Optional<String> fetchResultAsync(String endpoint)
+	{
+		final AsyncHttpClient asyncHttpClient = new DefaultAsyncHttpClient();
+		final CompletableFuture<org.asynchttpclient.Response> futureResponse =
+				asyncHttpClient.prepareGet(endpoint)
+						.execute()
+						.toCompletableFuture()
+						.exceptionally(logAndReturnNothing(endpoint));
+
+
+		try
+		{
+			//-- This is a blocking call since we are extracting the value eagerly
+			return futureResponse.thenApply(extractContentFromResponse(endpoint)).get();
+		}
+		catch (Exception ignore)
+		{
+			logger.error("Returning empty result as fallback due to error",ignore.getCause());
+			return Optional.empty();
+		}
+	}
+
+	static private Function<org.asynchttpclient.Response,Optional<String>> extractContentFromResponse(String endpoint)
+	{
+		return response -> {
+			// The response might have been set to null due to an error in an upstream operator..
+			if(null == response) { return Optional.empty() ; }
+
+			final String responseBody = response.getResponseBody(Charset.defaultCharset());
+			logger.info("Response from {} is {}",endpoint,responseBody);
+			return Optional.of(responseBody);
+		};
+	}
+	static private Function<Throwable,org.asynchttpclient.Response> logAndReturnNothing(String endpoint)
+	{
+		return throwable -> {
+			logger.info("Remote call to {} failed !!!",endpoint,throwable);
+			return null;
+		};
 	}
 
 	static public Optional<String> failsWithException()
@@ -90,7 +143,7 @@ public class ClientOperations {
 		final Set<String> links = Arrays.asList(result.split(","))
 				.stream()
 				.parallel()
-				.map(id -> fetchResultFrom(String.format(FIRST_TOP_STORY_HN,id)))
+				.map(id -> fetchResultAsync(String.format(FIRST_TOP_STORY_HN,id)))
 				.map(or -> Arrays.asList(
 						or.get().split(System.lineSeparator()))
 						.stream()

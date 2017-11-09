@@ -69,15 +69,15 @@ public class NonBlockingUseCaseTest {
 
 	@Test
 	@DisplayName("Fans out request to two mirror sites and consumes from the one that finishes first")
-	void consumeResultFromFirstCompleted() throws ExecutionException, InterruptedException {
-
+	void consumeResultFromFirstCompleted() throws Exception {
+		//fetchResultFrom(TOP_STORIES_FROM_HN);
 		final CompletableFuture<List<String>> futureFromHN = CompletableFuture
-				.supplyAsync(() -> fetchResultFrom(TOP_STORIES_FROM_HN))
+				.supplyAsync(() -> fetchResultAsync(TOP_STORIES_FROM_HN))
 				.thenApply(potentialResponse -> getTopN(potentialResponse.get(), 3));
 
 		final CompletableFuture<List<String>> futureFromDzone = CompletableFuture
 				.supplyAsync(() -> fetchResultFrom(LATEST_FROM_DZONE))
-				.thenApply(potentialResponse -> getTopN(potentialResponse.get(), 3));
+				.thenApply(potentialResponse -> getTopN(potentialResponse.orElse(StringUtils.EMPTY), 3));
 
 		CompletableFuture
 				.anyOf(futureFromHN, futureFromDzone)

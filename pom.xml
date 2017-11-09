@@ -30,6 +30,7 @@
     </properties>
 
     <dependencies>
+        <!-- Logging facade instead of plain sysout -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -84,6 +85,12 @@
             <groupId>org.glassfish.jersey.core</groupId>
             <artifactId>jersey-client</artifactId>
             <version>2.23.2</version>
+        </dependency>
+        <!-- Added to demonstrate async network calls -->
+        <dependency>
+            <groupId>org.asynchttpclient</groupId>
+            <artifactId>async-http-client</artifactId>
+            <version>LATEST</version>
         </dependency>
     </dependencies>
 </project>
