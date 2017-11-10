@@ -10,7 +10,10 @@ import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +42,7 @@ public class ClientOperations {
 		WebTarget webTarget = client.target(endpoint);
 		try
 		{
+			logger.info("Thread {} attempting to read from {}",Thread.currentThread().getName(),endpoint);
 			final Response response = webTarget
 					.request(MediaType.TEXT_PLAIN)
 					.get();
@@ -152,6 +156,24 @@ public class ClientOperations {
 				.map(ol -> ol.get().split(": ")[1].replaceAll("\"",""))
 				.collect(Collectors.toSet());
 		return links.stream().limit(topN).collect(Collectors.toList());
+	}
+
+	public static Optional<List<String>> readFromDiskBlocking(Path filePath)
+	{
+		try
+		{
+			logger.info("Thread {} reading file {} from disk",
+					Thread.currentThread().getName(),
+					filePath.toString());
+
+			final List<String> lines = Files.readAllLines(filePath, Charset.defaultCharset());
+			return Optional.of(lines);
+		}
+		catch (IOException cause)
+		{
+			logger.error("Failed to read {} from disk", cause.getCause());
+		}
+		return Optional.empty();
 	}
 
 	public static void main(String[] args)

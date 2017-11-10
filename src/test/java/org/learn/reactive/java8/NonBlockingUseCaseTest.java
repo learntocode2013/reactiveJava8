@@ -1,16 +1,21 @@
 package org.learn.reactive.java8;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.Month;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.learn.reactive.java8.ClientOperations.*;
@@ -22,6 +27,15 @@ public class NonBlockingUseCaseTest {
 	private final int poolSize = Runtime.getRuntime().availableProcessors();
 	private final ScheduledExecutorService tPoolService = Executors
 			.newScheduledThreadPool(poolSize);
+	private final ThreadFactory diskThreadFactory = new ThreadFactoryBuilder()
+			.setNameFormat("Disk-Reader-%d")
+			.build();
+	private final ThreadFactory networkThreadFactory = new ThreadFactoryBuilder()
+			.setNameFormat("Network-Writer-%d")
+			.build();
+	private final ExecutorService DISK_READ_THREAD_POOL = Executors.newSingleThreadExecutor(diskThreadFactory);
+	private final ExecutorService NETWORK_WRITE_THREAD_POOL = Executors.newSingleThreadExecutor(networkThreadFactory);
+	private final Path DISK_FILE_PATH = Paths.get("/","Users","disen","speakers.json");
 	private final Logger logger = LoggerFactory.getLogger(NonBlockingUseCaseTest.class);
 
 	//-- Compute intensive operation involving remote calls, processing and transformations --
@@ -122,6 +136,34 @@ public class NonBlockingUseCaseTest {
 		logger.info("Value {} is available for client thread [{}]",
 				recoverableFuture.get(),
 				Thread.currentThread().getName());
+	}
+
+	@Test
+	@DisplayName("Performs disk read and network write by utilizing a combination of built-in common pool and other thread pool")
+	void performIOIntensiveTask() {
+		final CompletableFuture<Optional<String>> potentialResult = CompletableFuture
+				.supplyAsync(() -> readFromDiskBlocking(DISK_FILE_PATH), DISK_READ_THREAD_POOL)
+				.exceptionally(throwable -> {
+					logger.error("Reading {} from disk failed", throwable.getCause());
+					return Optional.empty();
+				})
+				.thenApplyAsync(potentialContent -> {
+					logger.info("Thread {} performing transformation on content {} from disk",
+							Thread.currentThread().getName(),
+							potentialContent);
+					if (potentialContent.isPresent()) {
+						return potentialContent.get().stream().collect(Collectors.joining(System.lineSeparator()));
+					}
+					return StringUtils.EMPTY;
+				})
+				.thenApplyAsync(content -> fetchResultFrom(TOP_STORIES_FROM_HN), NETWORK_WRITE_THREAD_POOL)
+				.whenComplete((potentialResp, throwable) -> { if( null == throwable) {
+					logger.info("Number of top stories from HN call is:  {}",potentialResp.get().length());
+				}});
+
+
+		logger.info("Client thread - {} free to process other operations",Thread.currentThread().getName());
+		potentialResult.join();
 	}
 
 	private Consumer<Stream<Customer>> printEligibleCustomerCount() {

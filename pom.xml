@@ -92,5 +92,11 @@
             <artifactId>async-http-client</artifactId>
             <version>LATEST</version>
         </dependency>
+        <!-- -To inject custom thread factory to JVM thread pool -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>20.0</version>
+        </dependency>
     </dependencies>
 </project>
