@@ -2,6 +2,7 @@ package org.learn.reactive.java8;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.lang3.StringUtils;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -15,9 +16,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toList;
+import static org.learn.reactive.java8.BackupOperations.*;
 import static org.learn.reactive.java8.ClientOperations.*;
 import static org.learn.reactive.java8.FilterOperations.filterCartsByDate;
 import static org.learn.reactive.java8.FilterOperations.filterCustomersByPurchases;
@@ -28,15 +31,32 @@ public class NonBlockingUseCaseTest {
 	private final ScheduledExecutorService tPoolService = Executors
 			.newScheduledThreadPool(poolSize);
 	private final ThreadFactory diskThreadFactory = new ThreadFactoryBuilder()
-			.setNameFormat("Disk-Reader-%d")
+			.setNameFormat("Disk-Worker-%d")
 			.build();
 	private final ThreadFactory networkThreadFactory = new ThreadFactoryBuilder()
-			.setNameFormat("Network-Writer-%d")
+			.setNameFormat("Network-Worker-%d")
 			.build();
+
 	private final ExecutorService DISK_READ_THREAD_POOL = Executors.newSingleThreadExecutor(diskThreadFactory);
 	private final ExecutorService NETWORK_WRITE_THREAD_POOL = Executors.newSingleThreadExecutor(networkThreadFactory);
 	private final Path DISK_FILE_PATH = Paths.get("/","Users","disen","speakers.json");
+
+	private final BlockingQueue boundedTaskQueue = new ArrayBlockingQueue(poolSize * 3 );
+	private final ThreadPoolExecutor DISK_IO_THREAD_POOL = new ThreadPoolExecutor(poolSize,2*poolSize,
+			10,TimeUnit.SECONDS, boundedTaskQueue);
+	static private BackupTask backupTask = null;
+
 	private final Logger logger = LoggerFactory.getLogger(NonBlockingUseCaseTest.class);
+
+	@BeforeAll
+	static void beforeAll() {
+		backupTask = new BackupTaskBuilder()
+				.withFileCount(10)
+				.withDirCount(10)
+				.withFilePattern("data")
+				.withTableCount(10)
+				.build();
+	}
 
 	//-- Compute intensive operation involving remote calls, processing and transformations --
 	@Test
@@ -152,7 +172,7 @@ public class NonBlockingUseCaseTest {
 							Thread.currentThread().getName(),
 							potentialContent);
 					if (potentialContent.isPresent()) {
-						return potentialContent.get().stream().collect(Collectors.joining(System.lineSeparator()));
+						return potentialContent.get().stream().collect(joining(System.lineSeparator()));
 					}
 					return StringUtils.EMPTY;
 				})
@@ -164,6 +184,73 @@ public class NonBlockingUseCaseTest {
 
 		logger.info("Client thread - {} free to process other operations",Thread.currentThread().getName());
 		potentialResult.join();
+	}
+
+	@Test
+	@DisplayName("Demonstrates how different task types can be assigned to different thread pools for execution")
+	void offloadTasksToDifferentPools() {
+		// Backup all single files
+		final List<CompletableFuture<Void>> potentialFileBackup = backupFiles();
+
+		final CompletableFuture<Void> futureLogger = CompletableFuture.runAsync(() -> {
+			while(DISK_IO_THREAD_POOL.getActiveCount() != 0) {
+				logger.info("{} tasks are scheduled for disk i/o operation", DISK_IO_THREAD_POOL.getTaskCount());
+				logger.info("{} threads are performing disk i/o", DISK_IO_THREAD_POOL.getActiveCount());
+				addLatency(4);
+			}
+		});
+
+		// Backup all directories
+		final List<CompletableFuture<Void>> potentialDirBackup = backupFolders();
+
+		// Backup all db tables
+		final List<CompletableFuture<Void>> potentialDbBackup = backupDBTables();
+
+		// Zip contents of staging directory to generate final artifact
+		awaitFutureCompletion(potentialFileBackup, potentialDirBackup, potentialDbBackup);
+		futureLogger.complete(null);
+		logger.info("All futures completed. Backup Artifact {} can now be generated",
+				backupTask.getTargetArtifactLocation().toString());
+	}
+
+	private void awaitFutureCompletion(List<CompletableFuture<Void>> potentialFileBackup,
+	                                   List<CompletableFuture<Void>> potentialDirBackup,
+	                                   List<CompletableFuture<Void>> potentialDbBackup) {
+		potentialFileBackup.addAll(potentialDirBackup);
+		potentialFileBackup.addAll(potentialDbBackup);
+		final CompletableFuture[] futures = potentialFileBackup.toArray(new CompletableFuture[potentialFileBackup.size()]);
+		CompletableFuture.allOf(futures).join();
+	}
+
+	private List<CompletableFuture<Void>> backupDBTables() {
+		return backupTask.getSourceTables()
+				.map(tableName -> CompletableFuture
+						.supplyAsync(exportRowsFromTable(tableName), NETWORK_WRITE_THREAD_POOL)
+						.thenApplyAsync(saveToFile(backupTask.getStagingDirLocation().getParent().resolve(tableName)),
+								DISK_IO_THREAD_POOL)
+						.thenAcceptAsync(moveToStagingDir(backupTask.getStagingDirLocation())))
+				.collect(toList());
+	}
+
+	private List<CompletableFuture<Void>> backupFolders() {
+		return backupTask.getSourceDirLocation()
+				.map(dir -> CompletableFuture
+						.supplyAsync(compress(dir), DISK_IO_THREAD_POOL)
+						.thenAcceptAsync(moveToStagingDir(backupTask.getStagingDirLocation())))
+				.collect(toList());
+	}
+
+	/**
+	 * 1) We have a separate thread pool for disk i/o <br>
+	 * 2) Only light weight tasks, like moving files from one place to another <br>
+	 * is assigned to the default ForkJoin common pool of CF
+	 */
+	private List<CompletableFuture<Void>> backupFiles() {
+		return backupTask.getSourceFileLocation()
+					.map(file -> CompletableFuture
+							.supplyAsync(compress(file), DISK_IO_THREAD_POOL)
+							.thenAcceptAsync(moveToStagingDir(backupTask.getStagingDirLocation())))
+					.collect(toList());
 	}
 
 	private Consumer<Stream<Customer>> printEligibleCustomerCount() {
